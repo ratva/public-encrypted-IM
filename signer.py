@@ -81,6 +81,12 @@ def genkey():
         data = mykey.public_key().export_key(format='PEM', passphrase=None, pkcs=1.5, protection=None, randfunc=None, prot_params=None)
         f.write(data)
     
+    # See what key is
+    # test = signMessage('test')
+    # print(test)
+    # print('decoded:\n')
+    # print(test.decode())
+        
     # Check that I can read key correctly.
     # with open("myprivkey.pem", "rb") as f:
     #     data = f.read()
@@ -91,9 +97,7 @@ pass
 def start_client(hostname):
     # Create an IPv4 TCP socket for the client
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Set the socket address to be non-reusable
-    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-    # Connect socket to an existing hostname on port 9998, else fail and stop program.
+    # Connect socket to an existing hostname on port PORT, else fail and stop program.
     try:
         client_socket.connect((hostname, PORT))
         # Comment out print statements for gradescope
@@ -120,7 +124,9 @@ def signMessage(message):
 
     signature_hex = binascii.hexlify(signature)
     sigLength = padNumber(len(signature_hex))
-    signedMessage = mLength + message + sigLength + signature_hex
+    
+    signedMessage = bytes(mLength + message + sigLength,'utf-8') + signature_hex
+    
     return signedMessage
 
 def main():
