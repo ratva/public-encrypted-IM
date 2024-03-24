@@ -1,4 +1,5 @@
 import argparse
+import binascii
 import select
 import socket
 import sys
@@ -65,47 +66,34 @@ from Crypto.PublicKey import RSA
 
 # HOST = 127.0.0.1
 PORT = 9998
+pwd = b'securepassword'
 
 def genkey():
     mykey = RSA.generate(4096, randfunc=get_random_bytes, e=65537)
-    print(mykey)
-    print(mykey.public_key())
 
     # Private RSA key
-    with open("myprivatekey.pem", "wb") as f:
-        data = mykey.export_key(format='PEM', passphrase=None, pkcs=1.5, protection=None, randfunc=None, prot_params=None)
+    with open("myprivkey.pem", "wb") as f:
+        data = mykey.export_key(format='PEM', passphrase=pwd, pkcs=1.5, protection=None, randfunc=None, prot_params=None)
         f.write(data)
-        
-    with open("mypublickey.pem", "wb") as f:
+    
+    # Public RSA key
+    with open("mypubkey.pem", "wb") as f:
         data = mykey.public_key().export_key(format='PEM', passphrase=None, pkcs=1.5, protection=None, randfunc=None, prot_params=None)
         f.write(data)
-
-    # def mypad(somenum):
-    #     return '0' * (4-len(str(somenum))) + str(somenum)
-
-    # print(int(mypad(5)))
-
-    # pwd = b'secret'
-    # with open("myprivatekey.pem", "wb") as f:
-    #     data = mykey.export_key(passphrase=pwd,
-    #                                 pkcs=8,
-    #                                 protection='PBKDF2WithHMAC-SHA512AndAES256-CBC',
-    #                                 prot_params={'iteration_count':131072})
-    #     f.write(data)
-    # # and reimport it later:
-
-    # pwd = b'secret'
-    # with open("myprivatekey.pem", "rb") as f:
+    
+    # Check that I can read key correctly.
+    # with open("myprivkey.pem", "rb") as f:
     #     data = f.read()
-    #     mykey = RSA.import_key(data, pwd)
+    #     mykey2 = RSA.import_key(data, pwd)
+    # print(mykey==mykey2)
 pass
 
 def start_client(hostname):
     # Create an IPv4 TCP socket for the client
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Set the socket address to be reusable
-    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    # Connect socket to an existing hostname on port 9999, else fail and stop program.
+    # Set the socket address to be non-reusable
+    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+    # Connect socket to an existing hostname on port 9998, else fail and stop program.
     try:
         client_socket.connect((hostname, PORT))
         # Comment out print statements for gradescope
@@ -117,82 +105,23 @@ def start_client(hostname):
         sys.exit(0)
     return client_socket
 
-def encode_message(message, K1,K2):
-    # iv + E_k1(len(m)) + HMAC_k2(iv + E_k1(len(m))) + E_k1(m) + HMAC_k2(E_k1(m))
+def padNumber(number):
+    return '0' * (4-len(str(number))) + str(number)
 
-    IV = randb(16)
+def signMessage(message):
+    mLength = padNumber(len(message))
+                            
+    with open("myprivkey.pem", "rb") as f:
+        data = f.read()
+        mykey = RSA.import_key(data, pwd)
 
-    # Create a 256-bit key for AES encryption/decryption by using the SHA256 hash of the K1 key.
-    K1_256 = SHA256.new(K1.encode()).digest()
-    # The encode() method turns the string into bytes, needed for the SHA256.new() method.
-    # The digest() method returns the final 256 bit hash in binary.
+    h = SHA256.new(message.encode('utf-8'))
+    signature = pkcs1_15.new(mykey).sign(h)
 
-    # Create an HMAC instance by using the SHA256 hash of the K2 key.
-    K2_HMAC = HMAC.new(K2.encode(), digestmod=SHA256)
-    # Repeat for the message
-    K2_HMAC_message = HMAC.new(K2.encode(), digestmod=SHA256)
-
-    # Create an AES instance for encryption/decryption by using the SHA256 hash of the K1 key.
-    K1_cipher = AES.new(key=K1_256, mode=AES.MODE_CBC, iv=IV)
-
-    # Create a binary object which is the encryption of the length of the message (padded)
-    K1_length = K1_cipher.encrypt(pad(len(message).to_bytes(15,'little'), AES.block_size))
-    # Create a binary object which is the encryption of the message (padded)
-    K1_message = K1_cipher.encrypt(pad(message.encode('utf-8'), AES.block_size))
-
-    HMAC_IV_length = K2_HMAC.update(IV + K1_length).digest()
-    HMAC_message = K2_HMAC_message.update(K1_message).digest()
-    enc_message = IV + K1_length + HMAC_IV_length + K1_message + HMAC_message
-    return enc_message
-
-def decode_message(enc_message, K1, K2, sock):
-    # Extract the IV
-    IV = enc_message[:16]
-
-    # Extract K1_length
-    K1_length = enc_message[16:32]  # K1_length is 16 bytes (128 bits)
-
-    # Extract the HMAC of IV + K1_length
-    K2_HMAC_IV_K1_length = enc_message[32:64]  # The HMAC used SHA256 so it is 32 bytes (256 bits)
-
-    # Create a 256-bit key for HMAC computation by using the SHA256 hash of the K2 key.
-    K2_HMAC = HMAC.new(K2.encode(), digestmod=SHA256)
-    HMAC_IV_length = K2_HMAC.update(IV + K1_length).digest()
-
-    # Validate that IV and length are unchanged
-    if K2_HMAC.digest() != K2_HMAC_IV_K1_length:
-        print("ERROR: HMAC verification failed")
-        sock.shutdown(socket.SHUT_RDWR)
-        sock.close()
-        sys.exit(0)
-
-    K1_256 = SHA256.new(K1.encode()).digest()
-    K1_cipher = AES.new(key=K1_256, mode=AES.MODE_CBC, iv=IV)
-
-    try:
-        length = int.from_bytes(unpad(K1_cipher.decrypt(K1_length), AES.block_size),'little')
-    except Exception:
-        sock.shutdown(socket.SHUT_RDWR)
-        sock.close()
-        sys.exit(0)
-
-    enc_length = ceil(length/AES.block_size)*AES.block_size
-
-    K1_message = enc_message[64:64+enc_length]
-    HMAC_message = enc_message[64+enc_length:96+enc_length]
-
-    K2_HMAC_message_inst = HMAC.new(K2.encode(), digestmod=SHA256)
-    K2_HMAC_message = K2_HMAC_message_inst.update(K1_message).digest()
-
-    if K2_HMAC_message != HMAC_message:
-        print("ERROR: HMAC verification failed")
-        sock.shutdown(socket.SHUT_RDWR)
-        sock.close()
-        sys.exit(0)
-
-    message = unpad(K1_cipher.decrypt(K1_message), AES.block_size).decode('utf-8')
-
-    return message
+    signature_hex = binascii.hexlify(signature)
+    sigLength = padNumber(len(signature_hex))
+    signedMessage = mLength + message + sigLength + signature_hex
+    return signedMessage
 
 def main():
     # Create argument parser to handle command line options
@@ -211,43 +140,21 @@ def main():
     if args.genkey:
         # Start the server
         genkey()
+    
     else:
         # Start the client and connect to the hostname provided as an argument
         sock = start_client(args.c)
     
         try:
-            # Loop communication until the connection is closed
-            while True:
-                # Wait until either the stdin or the socket have a message - both are in the incoming data list and so select waits until either is populated.
-                readable, _, _ = select.select([sys.stdin, sock], [], [])
-                # Iterate over each readable source to manage if both stdin and the socket have new messages at the same time.
-                for source in readable:
-                    if source == sock:
-                        # Read message from socket
-                        enc_message = sock.recv(4096)
-                        # If message is empty it means the connection is closed, so close socket and exit the console
-                        # print(enc_message)
-                        if not enc_message:
-                            print('Connection closed')
-                            sock.shutdown(socket.SHUT_RDWR)
-                            sock.close()
-                            sys.exit(0)
+            # Read message from call
+            message = args.m
+            
+            signedMessage = signMessage(message)
 
-                        message = decode_message(enc_message, sock)
-
-
-                        # Otherwise decode the message from bytes to a string and print to console WITHOUT adding a new line \n character
-                        print(message, end='')
-                        # Flush the output to prevent issues with gradescope
-                        sys.stdout.flush()
-
-                    else:
-                        # Read message from stdin
-                        message = sys.stdin.readline()
-                        # Encrypt message
-                        enc_message = encode_message(message = message, K1=K1, K2=K2)
-                        # Encode the message to bytes and send it to the socket
-                        sock.sendall(enc_message)
+            sock.sendall(signedMessage)
+            sock.shutdown(socket.SHUT_RDWR)
+            sock.close()
+            sys.exit(0)
 
         except KeyboardInterrupt:
             # Console will show ^C
