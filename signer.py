@@ -23,18 +23,6 @@ def genkey():
     with open("mypubkey.pem", "wb") as f:
         data = mykey.public_key().export_key(format='PEM', passphrase=None, pkcs=1.5, protection=None, randfunc=None, prot_params=None)
         f.write(data)
-    
-    # # Print final signed message example.
-    # test = signMessage('test')
-    # print(test)
-    # print('decoded:\n')
-    # print(test.decode())
-        
-    # # Check that I can read key correctly.
-    # with open("myprivkey.pem", "rb") as f:
-    #     data = f.read()
-    #     mykey2 = RSA.import_key(data, pwd)
-    # print(mykey==mykey2)
 pass
 
 def start_client(hostname):
